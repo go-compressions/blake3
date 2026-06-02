@@ -314,6 +314,21 @@ func parallelChunks(n int, fn func(int)) {
 	wg.Wait()
 }
 
+// chunkCV computes the chaining value of the full 1024-byte chunk at chunk
+// index i (data[i*chunkLen:(i+1)*chunkLen]). It is the scalar per-chunk kernel
+// shared by the generic fillChunkCVs and the SIMD path's remainder/fallback.
+func chunkCV(data []byte, i int) [8]uint32 {
+	cs := newChunkState(uint64(i))
+	cs.update(data[i*chunkLen : (i+1)*chunkLen])
+	return cs.output().chainingValue()
+}
+
+// fillChunkCVs computes the chaining value of each full 1024-byte chunk
+// data[i*chunkLen:(i+1)*chunkLen] into cvs[i]. Its implementation is selected at
+// build time: a pure-Go version (blake3_generic.go) and an experimental amd64
+// SIMD version under GOEXPERIMENT=simd (blake3_simd_amd64.go) that produces
+// bit-identical results.
+
 // hashAll computes the root output node for the whole input in one shot. For
 // inputs larger than one chunk the independent per-chunk chaining values are
 // computed in parallel across CPU cores (BLAKE3's tree makes them independent);
@@ -327,11 +342,7 @@ func hashAll(data []byte) output {
 	}
 	nChunks := (len(data) + chunkLen - 1) / chunkLen
 	cvs := make([][8]uint32, nChunks-1)
-	parallelChunks(nChunks-1, func(i int) {
-		cs := newChunkState(uint64(i))
-		cs.update(data[i*chunkLen : (i+1)*chunkLen])
-		cvs[i] = cs.output().chainingValue()
-	})
+	fillChunkCVs(data, cvs)
 	var stack Hasher
 	for i, cv := range cvs {
 		stack.addChunkCV(cv, uint64(i)+1)

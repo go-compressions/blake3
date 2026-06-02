@@ -58,9 +58,33 @@ speed-up.
 
 An SIMD-assembly implementation such as
 [`lukechampine.com/blake3`](https://github.com/lukechampine/blake3) is still
-several times faster on a single core (hand-written AVX2). This package
-deliberately trades that for being **pure Go with zero assembly** — portable to
-every `GOARCH` and trivially auditable.
+several times faster on a single core (hand-written AVX2). The default build of
+this package deliberately trades that for being **pure Go with zero assembly** —
+portable to every `GOARCH` and trivially auditable.
+
+### Experimental SIMD path (amd64, `GOEXPERIMENT=simd`)
+
+There is now a **cgo-free SIMD acceleration that is still pure Go** — no
+assembly. It uses Go 1.26's experimental [`simd/archsimd`] intrinsics and only
+compiles under `GOEXPERIMENT=simd` on `amd64` (`blake3_simd_amd64.go`, guarded
+by `//go:build goexperiment.simd && amd64`). Every other build is byte-for-byte
+unaffected and falls back to the pure-Go kernel.
+
+It hashes **8 full chunks at once**, one chunk per 256-bit AVX2 lane: the 16
+compression-state words become 16 vectors and the quarter-round is pure
+elementwise `Add`/`Xor` plus a shift-or rotate (kept inside AVX2 — `archsimd`'s
+`RotateAllRight` would lower to AVX-512). The result is **bit-identical** to the
+scalar path, verified against the official BLAKE3 vectors in the `simd` CI job.
+
+```sh
+GOEXPERIMENT=simd go test ./...      # requires Go 1.26+, amd64 with AVX2
+```
+
+Caveats, by design: it's **experimental** (the `simd` package is outside the Go
+1 compatibility promise), **amd64-only** (other arches keep the pure-Go path),
+and needs a non-default build flag — so it is opt-in, never the default.
+
+[`simd/archsimd`]: https://pkg.go.dev/simd/archsimd
 
 ## License
 
