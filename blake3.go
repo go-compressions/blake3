@@ -323,11 +323,20 @@ func chunkCV(data []byte, i int) [8]uint32 {
 	return cs.output().chainingValue()
 }
 
+// fillChunkCVsScalar computes every chunk's chaining value with the scalar
+// kernel, across CPU cores. It is the default build's fillChunkCVs and the
+// small-input / no-SIMD fallback for the SIMD builds.
+func fillChunkCVsScalar(data []byte, cvs [][8]uint32) {
+	parallelChunks(len(cvs), func(i int) {
+		cvs[i] = chunkCV(data, i)
+	})
+}
+
 // fillChunkCVs computes the chaining value of each full 1024-byte chunk
 // data[i*chunkLen:(i+1)*chunkLen] into cvs[i]. Its implementation is selected at
-// build time: a pure-Go version (blake3_generic.go) and an experimental amd64
-// SIMD version under GOEXPERIMENT=simd (blake3_simd_amd64.go) that produces
-// bit-identical results.
+// build time: a pure-Go version (blake3_generic.go) and experimental SIMD
+// versions under GOEXPERIMENT=simd for amd64 (blake3_simd_amd64.go) and arm64
+// (blake3_simd_arm64.go) that produce bit-identical results.
 
 // hashAll computes the root output node for the whole input in one shot. For
 // inputs larger than one chunk the independent per-chunk chaining values are

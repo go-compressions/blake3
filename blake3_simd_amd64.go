@@ -17,19 +17,23 @@ package blake3
 
 import (
 	"encoding/binary"
+	"runtime"
 	"simd/archsimd"
 )
 
-// fillChunkCVs hashes 8 chunks per AVX2 batch, with the scalar chunkCV handling
-// both the sub-8 remainder and CPUs without AVX2 (the intrinsics compile on any
-// amd64 but the instructions must be present at runtime).
+// fillChunkCVs hashes 8 chunks per AVX2 batch, with the scalar fillChunkCVsScalar
+// handling the sub-8 remainder, small inputs, and CPUs without AVX2 (the
+// intrinsics compile on any amd64 but the instructions must be present at
+// runtime). SIMD is only used once there are at least NumCPU batches, so the
+// per-batch transpose can't make small inputs slower than the scalar path
+// (the crossover sits at batches ≈ NumCPU; see the arm64 kernel's note).
 func fillChunkCVs(data []byte, cvs [][8]uint32) {
 	n := len(cvs)
-	if !archsimd.X86.AVX2() {
-		parallelChunks(n, func(i int) { cvs[i] = chunkCV(data, i) })
+	batches := n / 8
+	if batches < runtime.NumCPU() || !archsimd.X86.AVX2() {
+		fillChunkCVsScalar(data, cvs)
 		return
 	}
-	batches := n / 8
 	parallelChunks(batches, func(b int) {
 		compress8(data, b*8, cvs)
 	})

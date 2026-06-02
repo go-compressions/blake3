@@ -16,6 +16,7 @@ package blake3
 
 import (
 	"encoding/binary"
+	"runtime"
 	"simd/archsimd"
 )
 
@@ -24,6 +25,16 @@ const simdLanes = 4 // NEON: 128-bit / 32-bit lanes
 func fillChunkCVs(data []byte, cvs [][8]uint32) {
 	n := len(cvs)
 	batches := n / simdLanes
+	// SIMD only pays off once there are enough batches to fill the CPUs and
+	// amortize the per-batch transpose; below that the scalar per-chunk path
+	// (more, lighter tasks) is faster. Measured crossover on a 16-core M4 Max:
+	// scalar wins at 64 KiB (15 batches), NEON wins from 80 KiB (19 batches) —
+	// i.e. right at batches ≈ NumCPU. Gating here keeps us on the faster side
+	// at every size (no SIMD slowdown for small inputs).
+	if batches < runtime.NumCPU() {
+		fillChunkCVsScalar(data, cvs)
+		return
+	}
 	parallelChunks(batches, func(b int) {
 		compress4(data, b*simdLanes, cvs)
 	})

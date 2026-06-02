@@ -91,7 +91,7 @@ natively on an Apple M4 Max:
 | input | scalar | archsimd NEON | Δ |
 | --- | --- | --- | --- |
 | 2 KiB | 337 MB/s | 335 MB/s | tie (single chunk — no SIMD) |
-| 64 KiB | 841 MB/s | 642 MB/s | −24% (transpose/batch overhead dominates) |
+| 64 KiB | 841 MB/s | 841 MB/s | tie (scalar fallback — see below) |
 | 1 MiB | 1791 MB/s | 2452 MB/s | **+37%** |
 | 16 MiB | 2350 MB/s | 3297 MB/s | **+40%** |
 
@@ -100,8 +100,15 @@ large inputs are memory-bandwidth bound; SIMD only adds per-core width on top.
 Crucially it is a *win* — the same kernel built on the function-call SIMD
 library go-highway was 8–40× *slower* (see above). That is the whole point:
 inlined compiler intrinsics suit a fixed-size kernel; function-call wrappers do
-not. (The 64 KiB regression is the scalar per-chunk gather not being amortized
-at that size; raising the SIMD threshold would fix it.)
+not.
+
+The kernel **only switches to SIMD once there are at least `NumCPU` chunk
+batches** — enough to fill the cores and amortize the per-batch word transpose.
+Below that the scalar per-chunk path (more, lighter tasks) is faster, so the
+SIMD build is never slower than scalar at any size. The crossover was measured
+exactly on the 16-core M4 Max: scalar wins at 64 KiB (15 batches), NEON wins
+from 80 KiB (19 batches) — i.e. right at batches ≈ NumCPU. The same gate guards
+the amd64 path.
 
 Caveats, by design: it's **experimental** (the `simd` package is outside the Go
 1 compatibility promise), needs a **non-default build flag**, and is **amd64

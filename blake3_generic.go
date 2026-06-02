@@ -7,7 +7,5 @@ package blake3
 // amd64 SIMD path (blake3_simd_amd64.go) is not selected, so the standard
 // `go build` is unaffected by the SIMD code.
 func fillChunkCVs(data []byte, cvs [][8]uint32) {
-	parallelChunks(len(cvs), func(i int) {
-		cvs[i] = chunkCV(data, i)
-	})
+	fillChunkCVsScalar(data, cvs)
 }
