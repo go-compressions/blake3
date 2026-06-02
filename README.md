@@ -86,6 +86,45 @@ and needs a non-default build flag — so it is opt-in, never the default.
 
 [`simd/archsimd`]: https://pkg.go.dev/simd/archsimd
 
+### Why not a portable SIMD library (go-highway, kelindar/simd, …)
+
+We evaluated [`go-highway`] — a "write SIMD once, run on AVX2/NEON/fallback"
+library — as a way to get SIMD on **arm64** too (Go's `archsimd` is amd64-only
+for now). A NEON 4-way chunk kernel was implemented and verified bit-identical
+to the scalar path, then benchmarked against the scalar build on the same
+machine.
+
+`BenchmarkSum256`, Apple M4 Max (16 cores), Go 1.26, go-highway v0.0.12:
+
+| input | scalar (pure-Go) | go-highway NEON | result |
+| --- | --- | --- | --- |
+| 2 KiB | 346 MB/s | 339 MB/s | tie (single chunk — no SIMD either way) |
+| 64 KiB | 863 MB/s | **22 MB/s** | ~40× slower |
+| 1 MiB | 1760 MB/s | 232 MB/s | ~7.6× slower |
+| 16 MiB | 2273 MB/s | 240 MB/s | ~9.5× slower |
+
+So we **do not use it**. The cause is structural, not specific to go-highway:
+it (like `kelindar/simd`, `vek`, and similar) exposes each SIMD op as a
+**non-inlined assembly call that passes vectors through memory**. Those
+libraries are built for *bulk elementwise math over large arrays* (one asm call
+amortized over thousands of elements). BLAKE3's inner loop is the opposite — a
+fixed-size kernel of thousands of tiny **interdependent** vector ops — so the
+per-call + memory-round-trip overhead dwarfs the actual 16/32-byte SIMD work.
+
+The right tool for a kernel like this is **inlined, register-allocated compiler
+intrinsics** — i.e. Go's `simd/archsimd` (above), or hand-written whole-kernel
+assembly (e.g. [`lukechampine.com/blake3`], not pure Go). The portable SIMD
+*libraries* cannot inline, so they lose to scalar here. When `archsimd` gains
+arm64 (NEON/SVE) support, the `compress8` kernel extends to arm64 in the same
+style — that is the path we'll take, rather than a function-call library.
+
+Reproduce: `go test -run x -bench BenchmarkSum256 -benchtime=1s ./...` (scalar)
+versus the same with the go-highway kernel (the spike is not committed; see this
+section's git history / the commit that added `BenchmarkSum256`).
+
+[`go-highway`]: https://github.com/ajroetker/go-highway
+[`lukechampine.com/blake3`]: https://github.com/lukechampine/blake3
+
 ## License
 
 BSD-3-Clause. See [LICENSE](LICENSE).
