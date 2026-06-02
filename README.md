@@ -80,9 +80,33 @@ scalar path, verified against the official BLAKE3 vectors in the `simd` CI job.
 GOEXPERIMENT=simd go test ./...      # requires Go 1.26+, amd64 with AVX2
 ```
 
+There is a matching **arm64 NEON** kernel (`blake3_simd_arm64.go`, guarded by
+`//go:build goexperiment.simd && arm64`) using the same intrinsics. NEON
+registers are 128-bit, so it hashes **4 chunks per lane** (`Uint32x4`). arm64
+support for `simd/archsimd` landed on Go's `dev.simd` branch (targeting Go
+1.27), so this path needs a Go 1.27+ toolchain; on Go 1.26 it's simply not
+compiled. Verified bit-identical to scalar against the official vectors,
+natively on an Apple M4 Max:
+
+| input | scalar | archsimd NEON | Δ |
+| --- | --- | --- | --- |
+| 2 KiB | 337 MB/s | 335 MB/s | tie (single chunk — no SIMD) |
+| 64 KiB | 841 MB/s | 642 MB/s | −24% (transpose/batch overhead dominates) |
+| 1 MiB | 1791 MB/s | 2452 MB/s | **+37%** |
+| 16 MiB | 2350 MB/s | 3297 MB/s | **+40%** |
+
+The win is real but modest because the scalar path is already multi-core and
+large inputs are memory-bandwidth bound; SIMD only adds per-core width on top.
+Crucially it is a *win* — the same kernel built on the function-call SIMD
+library go-highway was 8–40× *slower* (see above). That is the whole point:
+inlined compiler intrinsics suit a fixed-size kernel; function-call wrappers do
+not. (The 64 KiB regression is the scalar per-chunk gather not being amortized
+at that size; raising the SIMD threshold would fix it.)
+
 Caveats, by design: it's **experimental** (the `simd` package is outside the Go
-1 compatibility promise), **amd64-only** (other arches keep the pure-Go path),
-and needs a non-default build flag — so it is opt-in, never the default.
+1 compatibility promise), needs a **non-default build flag**, and is **amd64
+(Go 1.26+) / arm64 (Go 1.27+)** only — other arches keep the pure-Go path. Opt-in,
+never the default.
 
 [`simd/archsimd`]: https://pkg.go.dev/simd/archsimd
 

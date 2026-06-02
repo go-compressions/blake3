@@ -1,4 +1,4 @@
-//go:build !(goexperiment.simd && amd64)
+//go:build !(goexperiment.simd && amd64) && !(goexperiment.simd && arm64)
 
 package blake3
 
