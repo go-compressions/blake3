@@ -69,6 +69,28 @@ func TestOfficialVectors(t *testing.T) {
 	}
 }
 
+// TestParallelMatchesStreaming cross-checks the parallel one-shot path
+// (Sum256/Sum512, used for inputs above the parallel threshold) against the
+// sequential streaming path (verified against the official vectors), for inputs
+// large enough to trigger multi-core chunk hashing.
+func TestParallelMatchesStreaming(t *testing.T) {
+	for _, n := range []int{16*1024 + 1, 100 * 1024, 1 << 20} {
+		in := patternInput(n)
+		// Streaming (sequential) reference for the same input.
+		h := New()
+		h.Write(in)
+		var want [64]byte
+		h.Digest(want[:])
+
+		if got := Sum256(in); !bytes.Equal(got[:], want[:32]) {
+			t.Fatalf("n=%d: parallel Sum256 != streaming", n)
+		}
+		if got := Sum512(in); !bytes.Equal(got[:], want[:]) {
+			t.Fatalf("n=%d: parallel Sum512 != streaming", n)
+		}
+	}
+}
+
 func TestStreamingMatchesOneShot(t *testing.T) {
 	in := patternInput(8192 + 123) // spans many chunks + a partial tail
 	want := Sum256(in)

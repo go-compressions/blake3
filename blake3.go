@@ -8,6 +8,9 @@ package blake3
 import (
 	"encoding/binary"
 	"math/bits"
+	"runtime"
+	"sync"
+	"sync/atomic"
 )
 
 const (
@@ -26,8 +29,26 @@ var iv = [8]uint32{
 	0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
 }
 
-// msgPermutation is the per-round message word permutation.
+// msgPermutation is the per-round message word permutation (RFC/spec).
 var msgPermutation = [16]int{2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8}
+
+// msgSchedule precomputes, for each of the 7 rounds, the message-word index used
+// at each of the 16 mixing slots. It folds the per-round permutation into a
+// lookup so compress can index the original message directly instead of
+// physically permuting a 16-word array six times per block. Output is identical
+// to applying msgPermutation between rounds.
+var msgSchedule = func() [7][16]uint8 {
+	var s [7][16]uint8
+	for i := 0; i < 16; i++ {
+		s[0][i] = uint8(i)
+	}
+	for r := 1; r < 7; r++ {
+		for i := 0; i < 16; i++ {
+			s[r][i] = s[r-1][msgPermutation[i]]
+		}
+	}
+	return s
+}()
 
 // g is the BLAKE3 quarter-round mixing function.
 func g(s *[16]uint32, a, b, c, d int, mx, my uint32) {
@@ -41,25 +62,18 @@ func g(s *[16]uint32, a, b, c, d int, mx, my uint32) {
 	s[b] = bits.RotateLeft32(s[b]^s[c], -7)
 }
 
-func round(s, m *[16]uint32) {
+func round(s, m *[16]uint32, r int) {
+	sc := &msgSchedule[r]
 	// Columns.
-	g(s, 0, 4, 8, 12, m[0], m[1])
-	g(s, 1, 5, 9, 13, m[2], m[3])
-	g(s, 2, 6, 10, 14, m[4], m[5])
-	g(s, 3, 7, 11, 15, m[6], m[7])
+	g(s, 0, 4, 8, 12, m[sc[0]], m[sc[1]])
+	g(s, 1, 5, 9, 13, m[sc[2]], m[sc[3]])
+	g(s, 2, 6, 10, 14, m[sc[4]], m[sc[5]])
+	g(s, 3, 7, 11, 15, m[sc[6]], m[sc[7]])
 	// Diagonals.
-	g(s, 0, 5, 10, 15, m[8], m[9])
-	g(s, 1, 6, 11, 12, m[10], m[11])
-	g(s, 2, 7, 8, 13, m[12], m[13])
-	g(s, 3, 4, 9, 14, m[14], m[15])
-}
-
-func permute(m *[16]uint32) {
-	var p [16]uint32
-	for i := 0; i < 16; i++ {
-		p[i] = m[msgPermutation[i]]
-	}
-	*m = p
+	g(s, 0, 5, 10, 15, m[sc[8]], m[sc[9]])
+	g(s, 1, 6, 11, 12, m[sc[10]], m[sc[11]])
+	g(s, 2, 7, 8, 13, m[sc[12]], m[sc[13]])
+	g(s, 3, 4, 9, 14, m[sc[14]], m[sc[15]])
 }
 
 // compress runs the 7-round BLAKE3 compression and returns the 16-word state.
@@ -72,10 +86,7 @@ func compress(cv *[8]uint32, block *[16]uint32, counter uint64, blkLen, flags ui
 	}
 	m := *block
 	for r := 0; r < 7; r++ {
-		round(&state, &m)
-		if r < 6 {
-			permute(&m)
-		}
+		round(&state, &m, r)
 	}
 	for i := 0; i < 8; i++ {
 		state[i] ^= state[i+8]
@@ -271,20 +282,81 @@ func (h *Hasher) Sum(b []byte) []byte {
 	return append(b, d[:]...)
 }
 
+// parallelMinChunks is the chunk-count below which the per-chunk work is too
+// small to outweigh goroutine scheduling, so we run inline.
+const parallelMinChunks = 16
+
+// parallelChunks runs fn(0..n-1) across CPU cores; fn must only touch state
+// private to its index (here, a distinct slice element). n is always >= 1.
+func parallelChunks(n int, fn func(int)) {
+	if n < parallelMinChunks {
+		for i := 0; i < n; i++ {
+			fn(i)
+		}
+		return
+	}
+	workers := runtime.NumCPU()
+	var wg sync.WaitGroup
+	var next int64 = -1
+	wg.Add(workers)
+	for w := 0; w < workers; w++ {
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(atomic.AddInt64(&next, 1))
+				if i >= n {
+					return
+				}
+				fn(i)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// hashAll computes the root output node for the whole input in one shot. For
+// inputs larger than one chunk the independent per-chunk chaining values are
+// computed in parallel across CPU cores (BLAKE3's tree makes them independent);
+// the cheap O(chunks) tree merge stays sequential. The result is byte-identical
+// to the incremental Hasher.
+func hashAll(data []byte) output {
+	if len(data) <= chunkLen {
+		cs := newChunkState(0)
+		cs.update(data)
+		return cs.output()
+	}
+	nChunks := (len(data) + chunkLen - 1) / chunkLen
+	cvs := make([][8]uint32, nChunks-1)
+	parallelChunks(nChunks-1, func(i int) {
+		cs := newChunkState(uint64(i))
+		cs.update(data[i*chunkLen : (i+1)*chunkLen])
+		cvs[i] = cs.output().chainingValue()
+	})
+	var stack Hasher
+	for i, cv := range cvs {
+		stack.addChunkCV(cv, uint64(i)+1)
+	}
+	last := newChunkState(uint64(nChunks - 1))
+	last.update(data[(nChunks-1)*chunkLen:])
+	o := last.output()
+	for i := stack.cvStackLen - 1; i >= 0; i-- {
+		o = parentOutput(stack.cvStack[i], o.chainingValue())
+	}
+	return o
+}
+
 // Sum256 returns the 32-byte BLAKE3 digest of data.
 func Sum256(data []byte) [32]byte {
-	h := New()
-	h.Write(data)
+	o := hashAll(data)
 	var out [32]byte
-	h.finalize(out[:])
+	o.rootOutput(out[:])
 	return out
 }
 
 // Sum512 returns the first 64 bytes of BLAKE3 extendable output for data.
 func Sum512(data []byte) [64]byte {
-	h := New()
-	h.Write(data)
+	o := hashAll(data)
 	var out [64]byte
-	h.finalize(out[:])
+	o.rootOutput(out[:])
 	return out
 }
