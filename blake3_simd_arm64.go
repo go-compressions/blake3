@@ -15,9 +15,9 @@
 package blake3
 
 import (
-	"encoding/binary"
 	"runtime"
 	"simd/archsimd"
+	"unsafe"
 )
 
 const simdLanes = 4 // NEON: 128-bit / 32-bit lanes
@@ -46,6 +46,25 @@ func fillChunkCVs(data []byte, cvs [][8]uint32) {
 // rotr rotates each 32-bit lane right by k via shift+or (NEON has no rotate).
 func rotr(x archsimd.Uint32x4, k uint64) archsimd.Uint32x4 {
 	return x.ShiftAllRight(k).Or(x.ShiftAllLeft(32 - k))
+}
+
+// transpose4 returns the columns of the 4×4 matrix whose rows are r0..r3:
+// result k = {r0[k], r1[k], r2[k], r3[k]}. Two 32-bit transposes (TRN1/TRN2)
+// then two 64-bit interleaves (ZIP1/ZIP2) — the standard NEON 4×4 transpose,
+// expressed with archsimd intrinsics (no scalar gather).
+func transpose4(r0, r1, r2, r3 archsimd.Uint32x4) (archsimd.Uint32x4, archsimd.Uint32x4, archsimd.Uint32x4, archsimd.Uint32x4) {
+	t0 := r0.TransposeEven(r1)
+	t1 := r0.TransposeOdd(r1)
+	t2 := r2.TransposeEven(r3)
+	t3 := r2.TransposeOdd(r3)
+	a0 := t0.AsUint64x2()
+	a1 := t1.AsUint64x2()
+	a2 := t2.AsUint64x2()
+	a3 := t3.AsUint64x2()
+	return a0.InterleaveLo(a2).AsUint32x4(), // col 0
+		a1.InterleaveLo(a3).AsUint32x4(), // col 1
+		a0.InterleaveHi(a2).AsUint32x4(), // col 2
+		a1.InterleaveHi(a3).AsUint32x4() // col 3
 }
 
 func gVec(va, vb, vc, vd, mx, my archsimd.Uint32x4) (archsimd.Uint32x4, archsimd.Uint32x4, archsimd.Uint32x4, archsimd.Uint32x4) {
@@ -83,16 +102,21 @@ func compress4(data []byte, base int, cvs [][8]uint32) {
 	}
 
 	for b := 0; b < 16; b++ {
-		var scratch [16][simdLanes]uint32
-		for j := 0; j < simdLanes; j++ {
-			blk := data[(base+j)*chunkLen+b*blockLen:]
-			for i := 0; i < 16; i++ {
-				scratch[i][j] = binary.LittleEndian.Uint32(blk[i*4:])
-			}
-		}
+		// Load each chunk's 16 message words directly as vectors — on a
+		// little-endian arch the chunk bytes are the LE words — and transpose
+		// 4 chunks at a time so m[i] lane j = word i of chunk j. No scalar gather.
+		w0 := unsafe.Slice((*uint32)(unsafe.Pointer(&data[(base+0)*chunkLen+b*blockLen])), 16)
+		w1 := unsafe.Slice((*uint32)(unsafe.Pointer(&data[(base+1)*chunkLen+b*blockLen])), 16)
+		w2 := unsafe.Slice((*uint32)(unsafe.Pointer(&data[(base+2)*chunkLen+b*blockLen])), 16)
+		w3 := unsafe.Slice((*uint32)(unsafe.Pointer(&data[(base+3)*chunkLen+b*blockLen])), 16)
 		var m [16]archsimd.Uint32x4
-		for i := 0; i < 16; i++ {
-			m[i] = archsimd.LoadUint32x4(scratch[i][:])
+		for g := 0; g < 16; g += simdLanes {
+			m[g], m[g+1], m[g+2], m[g+3] = transpose4(
+				archsimd.LoadUint32x4(w0[g:]),
+				archsimd.LoadUint32x4(w1[g:]),
+				archsimd.LoadUint32x4(w2[g:]),
+				archsimd.LoadUint32x4(w3[g:]),
+			)
 		}
 
 		flags := uint32(0)
