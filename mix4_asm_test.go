@@ -1,4 +1,4 @@
-//go:build arm64 && blake3asm
+//go:build (arm64 || amd64) && !goexperiment.simd
 
 package blake3
 
@@ -87,7 +87,7 @@ func TestFillChunkCVsASM(t *testing.T) {
 		rng.Read(data)
 		got := make([][8]uint32, nChunks)
 		want := make([][8]uint32, nChunks)
-		fillChunkCVsASM(data, got)
+		fillChunkCVs(data, got)
 		fillChunkCVsScalar(data, want)
 		for i := 0; i < nChunks; i++ {
 			if got[i] != want[i] {
@@ -104,7 +104,7 @@ func BenchmarkFillChunkCVsASM(b *testing.B) {
 	b.SetBytes(int64(len(data)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		fillChunkCVsASM(data, cvs)
+		fillChunkCVs(data, cvs)
 	}
 }
 

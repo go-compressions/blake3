@@ -102,7 +102,7 @@ func main() {
 	}
 	b.Ret()
 
-	f := emit.NewFile("arm64")
+	f := emit.NewFile("arm64 && !goexperiment.simd")
 	f.Add(b.Func())
 	if err := os.WriteFile("mix4_arm64.s", []byte(f.String()), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, err)

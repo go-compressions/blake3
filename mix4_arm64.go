@@ -1,4 +1,4 @@
-//go:build arm64 && blake3asm
+//go:build arm64 && !goexperiment.simd
 
 package blake3
 

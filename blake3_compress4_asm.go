@@ -1,4 +1,4 @@
-//go:build arm64 && blake3asm
+//go:build (arm64 || amd64) && !goexperiment.simd
 
 package blake3
 
@@ -69,11 +69,11 @@ func compress4ASM(data []byte, base int, cvs [][8]uint32) {
 	}
 }
 
-// fillChunkCVsASM computes every chunk's chaining value, hashing four full
+// fillChunkCVs computes every chunk's chaining value, hashing four full
 // chunks at a time through the NEON kernel and falling back to the scalar
 // per-chunk path for the tail (and any partial final chunk). It produces
 // bit-identical results to fillChunkCVsScalar.
-func fillChunkCVsASM(data []byte, cvs [][8]uint32) {
+func fillChunkCVs(data []byte, cvs [][8]uint32) {
 	n := len(cvs)
 	// Count the leading full 4-chunk batches that lie entirely within data.
 	batches := 0
