@@ -1,4 +1,4 @@
-//go:build !arm64 && !amd64
+//go:build !arm64 && !amd64 && !loong64 && !riscv64
 
 package blake3
 
