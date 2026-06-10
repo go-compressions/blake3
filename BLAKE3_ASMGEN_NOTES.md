@@ -61,3 +61,16 @@ through the asm call) cut allocations from ~519 to **19 per 1 MiB hash**.
 All on plain `go build`. The win is real per-core and survives multi-core
 parallelism. The take-away: go-asmgen brings SIMD BLAKE3 to **stable Go, every
 64-bit target, today** — where the intrinsics path needs an unreleased Go.
+
+## Regenerating the kernels
+
+go-asmgen is a generate-time tool, not a module dependency (the `mix4_*_gen.go`
+are `//go:build ignore`; the `.s` files are committed, so consumers build with no
+extra deps and the module stays `go 1.21`). To regenerate after editing a
+generator:
+
+```sh
+go get github.com/go-asmgen/asmgen@v0.4.0   # temporary, for the generators
+go generate ./...                            # or: go run mix4_<arch>_gen.go
+go mod tidy                                   # drops go-asmgen again
+```
