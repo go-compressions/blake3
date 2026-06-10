@@ -2,17 +2,26 @@
 
 package blake3
 
-import "unsafe"
+import (
+	"sync"
+	"unsafe"
+)
+
+// mix4Buf holds the per-batch state and message planes. They are passed by
+// pointer to mix4 (asm), which forces them to escape the stack, so they are
+// pooled and reused across batches rather than allocated each time.
+type mix4Buf struct{ st, m [16][4]uint32 }
+
+var mix4Pool = sync.Pool{New: func() any { return new(mix4Buf) }}
 
 // compress4ASM computes the chaining values of the four full chunks
-// base..base+3 using the NEON mix4 kernel (4 chunks in parallel, one per lane),
+// base..base+3 using the mix4 SIMD kernel (4 chunks in parallel, one per lane),
 // writing them into cvs. Each chunk's 16 blocks are chained exactly as the
 // scalar path does, but four chunks at a time.
 func compress4ASM(data []byte, base int, cvs [][8]uint32) {
-	// st and m are hoisted out of the block loop and reused: each is passed by
-	// pointer to mix4 (asm), which forces them to escape, so allocating once per
-	// batch instead of once per block avoids 16x the garbage.
-	var st, m [16][4]uint32
+	buf := mix4Pool.Get().(*mix4Buf)
+	defer mix4Pool.Put(buf)
+	st, m := &buf.st, &buf.m
 	var cv [8][4]uint32
 	for i := 0; i < 8; i++ {
 		for l := 0; l < 4; l++ {
@@ -53,7 +62,7 @@ func compress4ASM(data []byte, base int, cvs [][8]uint32) {
 			st[12][l], st[13][l], st[14][l], st[15][l] = ctrLo[l], ctrHi[l], blockLen, flags
 		}
 
-		mix4(&st, &m)
+		mix4(st, m)
 
 		for i := 0; i < 8; i++ {
 			for l := 0; l < 4; l++ {

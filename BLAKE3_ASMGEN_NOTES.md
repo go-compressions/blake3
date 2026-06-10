@@ -27,17 +27,24 @@ chunk path matches `fillChunkCVsScalar` (`TestFillChunkCVsASM`), and the **full
 official BLAKE3 test vectors** (inputs to 1 MiB) pass through the SIMD path.
 arm64/amd64 run natively; riscv64/loong64 are cross-compiled and run under qemu:
 
+Containers are Debian (glibc, reproducible), never alpine/busybox:
+
 ```sh
 docker run --privileged --rm tonistiigi/binfmt --install all
-# riscv64 (RVV needs the V extension + VLEN>=128):
+# riscv64 (RVV needs the V extension + VLEN>=128), on Debian Trixie:
 CGO_ENABLED=0 GOOS=linux GOARCH=riscv64 go test -c -o /tmp/t .
-docker run --rm --platform linux/riscv64 -e QEMU_CPU=rv64,v=true,vlen=128 -v /tmp:/t busybox /t/t
-# loong64 (LSX needs la464); scratch image since busybox has no loong64:
-CGO_ENABLED=0 GOOS=linux GOARCH=loong64 go test -c -o /tmp/mix4_loong64.test .
-printf 'FROM scratch\nCOPY mix4_loong64.test /test\nENTRYPOINT ["/test"]\n' > Df
-docker buildx build --platform linux/loong64 -t m -f Df /tmp --load
-docker run --rm --platform linux/loong64 -e QEMU_CPU=la464 m
+docker run --rm --platform linux/riscv64 -e QEMU_CPU=rv64,v=true,vlen=128 -v /tmp:/t debian:trixie /t/t
+# loong64 (LSX needs la464). loongarch64 is not yet in the official debian Docker
+# manifest, so use the from-source Debian loong64 from loong13.debian.net (mirror
+# mirrors.loong64.com, debian-loong64 archive keyring):
+CGO_ENABLED=0 GOOS=linux GOARCH=loong64 go test -c -o /tmp/t .
+docker run --rm --platform linux/loong64 -e QEMU_CPU=la464 -v /tmp:/t ghcr.io/loong64/debian:trixie /t/t
 ```
+
+The same matrix runs in CI (`.github/workflows/simd-4arch.yml`): native amd64 +
+arm64, plus these two Debian qemu jobs. RVV uses shift-or rotates because Go's
+assembler has no `vror.vi` (the Zvbb bit-manip rotate); LSX gets a native
+`VROTRW`.
 
 ## Performance (native arches; emulated arches measure correctness only)
 
@@ -45,8 +52,11 @@ docker run --rm --platform linux/loong64 -e QEMU_CPU=la464 m
 
 | arch | kernel scalar→SIMD | end-to-end scalar→SIMD |
 |---|---|---|
-| arm64 (16-core M) | ~759 → ~197 ns (**~3.85x**) | ~1140 → ~3300 MB/s (**~2.9x**) |
+| arm64 (16-core M) | ~759 → ~197 ns (**~3.85x**) | scalar→SIMD **~3x** |
 | amd64 (4-core CI) | ~1158 → ~200 ns (**~5.8x**) | ~432 → ~1875 MB/s (**~4.3x**) |
+
+A `sync.Pool` for the per-batch state/message planes (they escape to the heap
+through the asm call) cut allocations from ~519 to **19 per 1 MiB hash**.
 
 All on plain `go build`. The win is real per-core and survives multi-core
 parallelism. The take-away: go-asmgen brings SIMD BLAKE3 to **stable Go, every
