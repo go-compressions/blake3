@@ -1,7 +1,7 @@
 name: simd-4arch
 on:
   push:
-    branches: [experiment/asmgen-neon]
+    branches: [main]
   pull_request:
 
 # Validate the go-asmgen SIMD BLAKE3 path (default `go build`, no GOEXPERIMENT)
