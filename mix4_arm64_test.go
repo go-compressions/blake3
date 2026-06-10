@@ -75,3 +75,46 @@ func BenchmarkMix4Scalar(b *testing.B) {
 		}
 	}
 }
+
+// TestFillChunkCVsASM checks the end-to-end NEON chunk path (compress4 chaining
+// 16 blocks via mix4) matches the scalar path bit-for-bit, across batch and
+// remainder sizes. The scalar path is validated against the official BLAKE3
+// vectors elsewhere, so matching it proves the SIMD path correct end-to-end.
+func TestFillChunkCVsASM(t *testing.T) {
+	rng := rand.New(rand.NewSource(7))
+	for _, nChunks := range []int{4, 5, 7, 8, 13, 16} {
+		data := make([]byte, nChunks*chunkLen)
+		rng.Read(data)
+		got := make([][8]uint32, nChunks)
+		want := make([][8]uint32, nChunks)
+		fillChunkCVsASM(data, got)
+		fillChunkCVsScalar(data, want)
+		for i := 0; i < nChunks; i++ {
+			if got[i] != want[i] {
+				t.Fatalf("nChunks=%d chunk %d: got %v want %v", nChunks, i, got[i], want[i])
+			}
+		}
+	}
+}
+
+func BenchmarkFillChunkCVsASM(b *testing.B) {
+	data := make([]byte, 1024*chunkLen) // 1 MiB
+	rand.New(rand.NewSource(8)).Read(data)
+	cvs := make([][8]uint32, 1024)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		fillChunkCVsASM(data, cvs)
+	}
+}
+
+func BenchmarkFillChunkCVsScalar(b *testing.B) {
+	data := make([]byte, 1024*chunkLen)
+	rand.New(rand.NewSource(8)).Read(data)
+	cvs := make([][8]uint32, 1024)
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		fillChunkCVsScalar(data, cvs)
+	}
+}
