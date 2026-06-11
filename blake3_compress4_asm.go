@@ -1,10 +1,10 @@
-//go:build (arm64 || amd64 || loong64 || riscv64) && !goexperiment.simd
+//go:build (arm64 || amd64 || loong64 || riscv64 || ppc64le || s390x) && !goexperiment.simd
 
 package blake3
 
 import (
+	"encoding/binary"
 	"sync"
-	"unsafe"
 )
 
 // mix4Buf holds the per-batch state and message planes. They are passed by
@@ -37,13 +37,14 @@ func compress4ASM(data []byte, base int, cvs [][8]uint32) {
 
 	for b := 0; b < 16; b++ {
 		// Transpose: m[i] lane l = word i of block b of chunk base+l. The block
-		// bytes are the little-endian words on this (LE) arch, matching the
-		// scalar's binary.LittleEndian load.
+		// words are little-endian (the BLAKE3 wire format), decoded exactly as the
+		// scalar path's binary.LittleEndian load — so this is correct on big-endian
+		// arches (s390x) as well as little-endian ones.
 		for l := 0; l < 4; l++ {
 			off := (base+l)*chunkLen + b*blockLen
-			w := unsafe.Slice((*uint32)(unsafe.Pointer(&data[off])), 16)
+			blk := data[off : off+blockLen]
 			for i := 0; i < 16; i++ {
-				m[i][l] = w[i]
+				m[i][l] = binary.LittleEndian.Uint32(blk[i*4:])
 			}
 		}
 

@@ -1,4 +1,4 @@
-//go:build (arm64 || amd64 || loong64 || riscv64) && !goexperiment.simd
+//go:build (arm64 || amd64 || loong64 || riscv64 || ppc64le || s390x) && !goexperiment.simd
 
 package blake3
 

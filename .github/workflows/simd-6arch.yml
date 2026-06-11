@@ -1,13 +1,14 @@
-name: simd-4arch
+name: simd-6arch
 on:
   push:
     branches: [main]
   pull_request:
 
 # Validate the go-asmgen SIMD BLAKE3 path (default `go build`, no GOEXPERIMENT)
-# on all four 64-bit Go targets: native amd64 + arm64, and riscv64 + loong64
-# under qemu on Debian. mix4/compress4 correctness and the full official vectors
-# all run through the asm kernel.
+# on all six 64-bit Go targets: native amd64 + arm64, and riscv64 + loong64 +
+# ppc64le + s390x under qemu on Debian. mix4/compress4 correctness and the full
+# official vectors all run through the asm kernel. s390x is big-endian, so its
+# pass proves the digest is bit-exact across endianness.
 jobs:
   native:
     strategy:
@@ -34,6 +35,8 @@ jobs:
         include:
           - { arch: riscv64, image: "debian:trixie", qemu: "rv64,v=true,vlen=128" }
           - { arch: loong64, image: "ghcr.io/loong64/debian:trixie", qemu: "la464" }
+          - { arch: ppc64le, image: "debian:trixie", qemu: "" }
+          - { arch: s390x, image: "debian:trixie", qemu: "" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

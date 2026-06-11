@@ -117,6 +117,38 @@ never the default.
 
 [`simd/archsimd`]: https://pkg.go.dev/simd/archsimd
 
+### Stable-Go SIMD on six 64-bit arches (go-asmgen, no build flag)
+
+The experimental `archsimd` path above needs an unreleased Go and only covers
+amd64/arm64. There is also a **default-build** SIMD path (plain `go build`, no
+`GOEXPERIMENT`) that runs on **all six 64-bit Go targets** — amd64 (SSE2),
+arm64 (NEON), riscv64 (RVV), loong64 (LSX), **ppc64le (VSX)**, and **s390x
+(vector facility)**. The 7-round 4-lane BLAKE3 mixing kernel `mix4` (4 chunks in
+parallel, one per 32-bit lane — pure Add/Xor/rotate, no multiply) is generated
+per-arch with [go-asmgen]; the `.s` files are committed, so the module keeps
+zero dependencies. Each arch is gated `<arch> && !goexperiment.simd` and falls
+back to the scalar pure-Go kernel everywhere else. Details in
+[`BLAKE3_ASMGEN_NOTES.md`](BLAKE3_ASMGEN_NOTES.md).
+
+Every arch is verified **bit-identical to the scalar path against the official
+BLAKE3 vectors** (inputs to 1 MiB): amd64/arm64 natively, the other four
+cross-compiled and run under qemu on Debian in CI
+([`simd-6arch.yml`](.github/workflows/simd-6arch.yml)). s390x is **big-endian**,
+so its vectors passing proves the digest is endianness-independent (the
+little-endian BLAKE3 message words are decoded with `binary.LittleEndian`,
+matching the scalar load; the per-word vector arithmetic needs no byte-swap).
+
+| arch | ISA | rotate | status |
+| --- | --- | --- | --- |
+| arm64   | NEON | shift-or | native, ~3.85× kernel speedup |
+| amd64   | SSE2 | `PSHUFLW`/shift-or | native, ~5.8× kernel speedup |
+| loong64 | LSX  | `VROTRW` | qemu-validated bit-exact; native perf pending |
+| riscv64 | RVV  | shift-or | qemu-validated bit-exact; native perf pending |
+| ppc64le | VSX  | `VRLW` (rotl 32−n) | qemu-validated bit-exact; native perf pending |
+| s390x   | z-vec | `VERLLF` (rotl 32−n) | qemu-validated bit-exact; native perf pending |
+
+[go-asmgen]: https://github.com/go-asmgen/asmgen
+
 ### Why not a portable SIMD library (go-highway, kelindar/simd, …)
 
 We evaluated [`go-highway`] — a "write SIMD once, run on AVX2/NEON/fallback"
