@@ -32,11 +32,11 @@ func schedule() [7][16]int {
 	return s
 }
 
-// rotr emits a 32-bit-lane rotate-right of V<reg> by n (V6 scratch).
+// rotr emits a 32-bit-lane rotate-right of V<reg> by n. go1.27+ Zvbb variant: a
+// single vror.vi replaces the base-RVV VSRLVI+VSLLVI+VORVV emulation (3 ops -> 1).
+// Requires the Zvbb extension at runtime; assembles only on go1.27+.
 func rotr(b *riscv64.Builder, reg, n int) {
-	b.Raw("VSRLVI $%d, V%d, V6", n, reg)
-	b.Raw("VSLLVI $%d, V%d, V%d", 32-n, reg, reg)
-	b.Raw("VORVV V6, V%d, V%d", reg, reg)
+	b.Raw("VRORVI $%d, V%d, V%d", n, reg, reg)
 }
 
 // loadWord emits: addr = base + off; V<dst> = mem[addr] (VL words).
