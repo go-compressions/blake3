@@ -140,12 +140,55 @@ matching the scalar load; the per-word vector arithmetic needs no byte-swap).
 
 | arch | ISA | rotate | status |
 | --- | --- | --- | --- |
-| arm64   | NEON | shift-or | native, ~3.85× kernel speedup |
-| amd64   | SSE2 | `PSHUFLW`/shift-or | native, ~5.8× kernel speedup |
+| arm64   | NEON | shift-or | native, **~8.7× `mix4` kernel speedup** (re-bench 2026-06-14) |
+| amd64   | SSE2 | `PSHUFLW`/shift-or | native, ~5.8× kernel speedup (CI); re-bench inconclusive under QEMU (see below) |
 | loong64 | LSX  | `VROTRW` | qemu-validated bit-exact; native perf pending |
 | riscv64 | RVV  | shift-or | qemu-validated bit-exact; native perf pending |
-| ppc64le | VSX  | `VRLW` (rotl 32−n) | qemu-validated bit-exact; native perf pending |
-| s390x   | z-vec | `VERLLF` (rotl 32−n) | qemu-validated bit-exact; native perf pending |
+| ppc64le | VSX  | `VRLW` (rotl 32−n) | qemu-validated bit-exact; **llvm-mca est. ~0.65 B/cyc (see below)**; native perf pending |
+| s390x   | z-vec | `VERLLF` (rotl 32−n) | qemu-validated bit-exact; **llvm-mca est. ~0.65 B/cyc (see below)**; native perf pending |
+
+**Re-bench `mix4` SIMD vs the 4-lane scalar round (`-count=6` medians, kernels
+unchanged, as of 2026-06-14).** arm64 native on Apple Silicon: `BenchmarkMix4`
+~257 ns vs `BenchmarkMix4Scalar` ~2244 ns → **~8.7×** (the per-call benchmark is
+jittery for such a small kernel; the order of magnitude is solid and the verdict
+— SIMD clearly wins — holds). amd64 was re-benched on the local x86_64 **QEMU**
+VM, where the tiny AVX2 `mix4` micro-benchmark is **too noisy to quote a clean
+ratio** (SIMD samples ranged 1461–6177 ns against a stable ~7820 ns scalar — a
+~1.8× median but ~5.4× at the fastest sample); QEMU's TCG does not emulate a
+single small SIMD kernel at a representative rate. The **native-CI ~5.8× figure
+is kept** as the trusted amd64 number.
+
+### ppc64le / s390x — llvm-mca cycle-model estimate
+
+> **Static analysis, NOT a hardware measurement; native perf pending real
+> silicon.** No GitHub-hosted POWER/IBM Z runner exists and qemu's TCG is not
+> cycle-accurate, so the cycle model is the only defensible signal. Numbers from
+> `llvm-mca` (LLVM 22) fed the **entire `mix4` kernel** (7 BLAKE3 rounds, fully
+> unrolled — there is no inner loop label to isolate, so the whole straight-line
+> `mix4` body is modeled as one block) translated to LLVM asm. `mix4` hashes
+> **4 chunks × 64 bytes = 256 input bytes** per call.
+
+| arch | cpu model | `mix4` cyc/call | B/cyc | scalar G-func cyc (throughput) |
+|---|---|---:|---:|---:|
+| ppc64le | pwr9 | 394 (256 B) | ~0.65 | ~3.5 cyc/G (8 add/xor/rot) |
+| s390x | z14 | 392 (256 B) | ~0.65 | ~7.5 cyc/G |
+
+Both vector `mix4` kernels model at **~0.65 input-B/cyc**. The empirical
+SIMD-vs-scalar speedup is better read from the **native arm64 re-bench (~8.7×)**
+and **amd64 CI (~5.8×)** above — a clean cyc-model speedup ratio for ppc64le/s390x
+is hard to state honestly because the scalar BLAKE3 G-function is a tight
+**latency-bound** dependency chain (each add feeds the next xor feeds the next
+rotate), which llvm-mca's *throughput* model fundamentally understates: it reports
+~3.5/7.5 cyc per G-function on raw RThroughput but real scalar BLAKE3 is bound by
+the carried dependency, not dispatch. So the ~0.65 B/cyc SIMD figure is the
+reliable cycle-model output; the scalar G-throughput is shown only as context.
+**ppc64le caveat:** the committed VSX `mix4` spills/reloads its working
+vectors via `LXVD2X`/`STXVD2X` between G-functions (336 loads + 224 stores) — it
+uses a small live-register window rather than keeping all 16 state words resident,
+which the cycle model counts in full; a register-pressure-aware kernel would model
+faster. Other caveats: llvm-mca idealizes the frontend (perfect dispatch, no
+cache/store-buffer stalls, no branch effects). All instructions in both `mix4`
+bodies and the scalar G models were accepted by llvm-mca (no fallbacks).
 
 [go-asmgen]: https://github.com/go-asmgen/asmgen
 
