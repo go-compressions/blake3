@@ -1,4 +1,4 @@
-<p align="center"><img src="https://raw.githubusercontent.com/go-compressions/brand/main/social/go-compressions-blake3.png" alt="go-compressions/blake3" width="720"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/go-compressions/brand/main/social/go-compressions.png" alt="go-compressions/blake3" width="720"></p>
 
 # blake3
 
@@ -133,29 +133,21 @@ back to the scalar pure-Go kernel everywhere else. Details in
 [`BLAKE3_ASMGEN_NOTES.md`](BLAKE3_ASMGEN_NOTES.md).
 
 Every arch is verified **bit-identical to the scalar path against the official
-BLAKE3 vectors** (inputs to 1 MiB): amd64/arm64 natively, ppc64le natively on
-real POWER10 silicon (GCC Compile Farm, June 2026), the other three
+BLAKE3 vectors** (inputs to 1 MiB): amd64/arm64 natively, the other four
 cross-compiled and run under qemu on Debian in CI
 ([`simd-6arch.yml`](.github/workflows/simd-6arch.yml)). s390x is **big-endian**,
 so its vectors passing proves the digest is endianness-independent (the
 little-endian BLAKE3 message words are decoded with `binary.LittleEndian`,
 matching the scalar load; the per-word vector arithmetic needs no byte-swap).
 
-**Six SIMD targets, validated on seven architectures.** Beyond the six SIMD
-targets above, the generic/scalar fallback path is build+test validated
-**bit-exact on ppc64 (big-endian)** running on real POWER9 silicon (GCC Compile
-Farm, June 2026) — a big-endian target distinct from s390x's vector kernel,
-proving the scalar BLAKE3 path is correct on big-endian hardware. SIMD itself
-stays the six targets listed; ppc64 exercises the portable fallback only.
-
 | arch | ISA | rotate | status |
 | --- | --- | --- | --- |
 | arm64   | NEON | shift-or | native, **~8.7× `mix4` kernel speedup** (re-bench 2026-06-14) |
 | amd64   | SSE2 | `PSHUFLW`/shift-or | native, ~5.8× kernel speedup (CI); re-bench inconclusive under QEMU (see below) |
 | loong64 | LSX  | `VROTRW` | qemu-validated bit-exact; native perf pending |
-| riscv64 | RVV  | shift-or | **native-measured on real SpacemiT X60** (RVV 1.0, a low-power in-order core — the only widely-available RVV silicon) — `mix4` ~2.9× scalar (3024 vs 8782 ns), `FillChunk` C-vs-scalar ~2.0× (275 vs 137 MB/s) (GCC Compile Farm, Go 1.26.4, June 2026); an out-of-order RVV core would likely do better |
-| ppc64le | VSX  | `VRLW` (rotl 32−n) | **native-measured on real POWER10** — `mix4` ~4.5× scalar (544 vs 2474 ns), `FillChunk` C-vs-scalar ~3.9× (308 vs 80 MB/s) (GCC Compile Farm, Go 1.26.4, June 2026) |
-| s390x   | z-vec | `VERLLF` (rotl 32−n) | qemu-validated bit-exact; native throughput pending (no GitHub-hosted IBM Z runner) |
+| riscv64 | RVV  | shift-or | qemu-validated bit-exact; native perf pending |
+| ppc64le | VSX  | `VRLW` (rotl 32−n) | qemu-validated bit-exact; **llvm-mca est. ~0.65 B/cyc (see below)**; native perf pending |
+| s390x   | z-vec | `VERLLF` (rotl 32−n) | qemu-validated bit-exact; **llvm-mca est. ~0.65 B/cyc (see below)**; native perf pending |
 
 **Re-bench `mix4` SIMD vs the 4-lane scalar round (`-count=6` medians, kernels
 unchanged, as of 2026-06-14).** arm64 native on Apple Silicon: `BenchmarkMix4`
@@ -170,18 +162,8 @@ is kept** as the trusted amd64 number.
 
 ### ppc64le / s390x — llvm-mca cycle-model estimate
 
-> **Update (June 2026): ppc64le is now natively measured** on real POWER10
-> silicon (GCC Compile Farm, VSX, Go 1.26.4) — `mix4` ~4.5× scalar (544 vs 2474
-> ns), `FillChunk` C-vs-scalar ~3.9× (308 vs 80 MB/s). **riscv64 is now natively
-> measured too** on a real SpacemiT X60 (RVV 1.0, a low-power in-order core — the
-> only widely-available RVV silicon; GCC Compile Farm, Go 1.26.4) — `mix4` ~2.9×
-> scalar (3024 vs 8782 ns), `FillChunk` C-vs-scalar ~2.0× (275 vs 137 MB/s); an
-> out-of-order RVV core would likely do better. The llvm-mca estimate
-> below predates that and is kept for context; **s390x** native throughput is
-> still pending (no GitHub-hosted IBM Z runner).
->
-> **Static analysis, NOT a hardware measurement.** No GitHub-hosted POWER/IBM Z
-> runner exists and qemu's TCG is not
+> **Static analysis, NOT a hardware measurement; native perf pending real
+> silicon.** No GitHub-hosted POWER/IBM Z runner exists and qemu's TCG is not
 > cycle-accurate, so the cycle model is the only defensible signal. Numbers from
 > `llvm-mca` (LLVM 22) fed the **entire `mix4` kernel** (7 BLAKE3 rounds, fully
 > unrolled — there is no inner loop label to isolate, so the whole straight-line
