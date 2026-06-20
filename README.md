@@ -153,7 +153,7 @@ stays the six targets listed; ppc64 exercises the portable fallback only.
 | arm64   | NEON | shift-or | native, **~8.7× `mix4` kernel speedup** (re-bench 2026-06-14) |
 | amd64   | SSE2 | `PSHUFLW`/shift-or | native, ~5.8× kernel speedup (CI); re-bench inconclusive under QEMU (see below) |
 | loong64 | LSX  | `VROTRW` | qemu-validated bit-exact; native perf pending |
-| riscv64 | RVV  | shift-or | qemu-validated bit-exact; native perf pending |
+| riscv64 | RVV  | shift-or | **native-measured on real SpacemiT X60** (RVV 1.0, a low-power in-order core — the only widely-available RVV silicon) — `mix4` ~2.9× scalar (3024 vs 8782 ns), `FillChunk` C-vs-scalar ~2.0× (275 vs 137 MB/s) (GCC Compile Farm, Go 1.26.4, June 2026); an out-of-order RVV core would likely do better |
 | ppc64le | VSX  | `VRLW` (rotl 32−n) | **native-measured on real POWER10** — `mix4` ~4.5× scalar (544 vs 2474 ns), `FillChunk` C-vs-scalar ~3.9× (308 vs 80 MB/s) (GCC Compile Farm, Go 1.26.4, June 2026) |
 | s390x   | z-vec | `VERLLF` (rotl 32−n) | qemu-validated bit-exact; native throughput pending (no GitHub-hosted IBM Z runner) |
 
@@ -172,7 +172,11 @@ is kept** as the trusted amd64 number.
 
 > **Update (June 2026): ppc64le is now natively measured** on real POWER10
 > silicon (GCC Compile Farm, VSX, Go 1.26.4) — `mix4` ~4.5× scalar (544 vs 2474
-> ns), `FillChunk` C-vs-scalar ~3.9× (308 vs 80 MB/s). The llvm-mca estimate
+> ns), `FillChunk` C-vs-scalar ~3.9× (308 vs 80 MB/s). **riscv64 is now natively
+> measured too** on a real SpacemiT X60 (RVV 1.0, a low-power in-order core — the
+> only widely-available RVV silicon; GCC Compile Farm, Go 1.26.4) — `mix4` ~2.9×
+> scalar (3024 vs 8782 ns), `FillChunk` C-vs-scalar ~2.0× (275 vs 137 MB/s); an
+> out-of-order RVV core would likely do better. The llvm-mca estimate
 > below predates that and is kept for context; **s390x** native throughput is
 > still pending (no GitHub-hosted IBM Z runner).
 >
