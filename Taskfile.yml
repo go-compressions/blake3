@@ -12,10 +12,14 @@ tasks:
       - go build ./...
 
   test:
-    desc: "Run tests with coverage"
+    desc: "Run tests with coverage and enforce 100%"
     cmds:
       - go test -race -coverprofile=cover.out ./...
       - go tool cover -func=cover.out
+      - |
+        pct=$(go tool cover -func=cover.out | awk '/^total:/ {sub(/%/,"",$3); print $3}')
+        echo "coverage: ${pct}%"
+        awk "BEGIN{ exit !(${pct} >= 100.0) }" || { echo "coverage ${pct}% < 100.0%"; exit 1; }
 
   lint:
     desc: "Vet the module"
