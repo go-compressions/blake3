@@ -6,9 +6,11 @@
 ![coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
 [![Go Reference](https://pkg.go.dev/badge/github.com/go-compressions/blake3.svg)](https://pkg.go.dev/github.com/go-compressions/blake3)
 
-Pure-Go, cgo-free implementation of the **BLAKE3** cryptographic hash (default,
-unkeyed mode), verified against the official BLAKE3 test vectors. Single static
-dependency-free package; 100% test coverage.
+Pure-Go, cgo-free implementation of the **BLAKE3** cryptographic hash. All three
+BLAKE3 modes — the default **unkeyed** hash, **keyed** hashing (MAC), and
+**key derivation** — are implemented and verified byte-for-byte against the
+official BLAKE3 test vectors (every published input length, 0 to 102400 bytes).
+Single static, dependency-free package; 100% test coverage.
 
 ```go
 import "github.com/go-compressions/blake3"
@@ -21,15 +23,32 @@ digest := h.Sum(nil)                  // 32-byte digest
 
 var xof [131]byte                     // extendable output (XOF)
 h.Digest(xof[:])
+
+// Keyed hashing (MAC) — 32-byte key replaces the IV.
+var key [32]byte
+mac := blake3.NewKeyed(key)
+mac.Write(msg)
+tag := mac.Sum(nil)
+
+// Key derivation — hardcode a globally unique, application-specific context.
+kdf := blake3.NewDeriveKey("example.com 2026-07-11 session keys")
+kdf.Write(keyMaterial)
+var subKey [32]byte
+kdf.Digest(subKey[:])                 // any length of derived key material
 ```
 
 ## API
 
-- `Sum256(data) [32]byte`, `Sum512(data) [64]byte`
-- `New() *Hasher` with `Write`, `Sum(b) []byte`, `Reset`, `Size`, `BlockSize`,
-  and `Digest(out []byte)` for arbitrary-length extendable output.
-
-Default (unkeyed) hash mode only; keyed and derive-key modes are not implemented.
+- `Sum256(data) [32]byte`, `Sum512(data) [64]byte` — one-shot unkeyed hashing.
+- `New() *Hasher` — streaming unkeyed hash.
+- `NewKeyed(key [32]byte) *Hasher` — keyed mode (KEYED_HASH): the key becomes the
+  initial chaining value.
+- `NewDeriveKey(context string) *Hasher` — key-derivation mode: the two-phase
+  DERIVE_KEY_CONTEXT / DERIVE_KEY_MATERIAL construction. The context string
+  should be hardcoded, globally unique, and application-specific.
+- Every `*Hasher` supports `Write`, `Sum(b) []byte`, `Reset` (preserves mode),
+  `Size`, `BlockSize`, and `Digest(out []byte)` for arbitrary-length extendable
+  output.
 
 ## Performance
 

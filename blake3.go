@@ -1,8 +1,9 @@
 // Package blake3 is a pure-Go, cgo-free implementation of the BLAKE3
-// cryptographic hash function (default, unkeyed mode), verified against the
-// official BLAKE3 test vectors. It offers fixed-size helpers (Sum256, Sum512),
-// a streaming hash.Hash-style Hasher, and arbitrary-length extendable output
-// (Hasher.Digest).
+// cryptographic hash function, verified against the official BLAKE3 test
+// vectors. It supports all three BLAKE3 modes — the default unkeyed hash (New,
+// Sum256, Sum512), keyed hashing / MAC (NewKeyed), and key derivation
+// (NewDeriveKey) — with fixed-size helpers, a streaming hash.Hash-style Hasher,
+// and arbitrary-length extendable output (Hasher.Digest).
 package blake3
 
 import (
@@ -21,6 +22,13 @@ const (
 	flagChunkEnd   uint32 = 1 << 1
 	flagParent     uint32 = 1 << 2
 	flagRoot       uint32 = 1 << 3
+
+	// Domain-separation flags for the keyed and key-derivation modes.
+	flagKeyedHash         uint32 = 1 << 4
+	flagDeriveKeyContext  uint32 = 1 << 5
+	flagDeriveKeyMaterial uint32 = 1 << 6
+
+	keyLen = 32 // bytes in a BLAKE3 key (8 little-endian 32-bit words)
 )
 
 // iv is the BLAKE3 initial chaining value (the SHA-256 IV).
@@ -141,24 +149,43 @@ func (o *output) rootOutput(out []byte) {
 	}
 }
 
-func parentOutput(left, right [8]uint32) output {
+// parentOutput builds the parent node merging two child chaining values. The
+// input chaining value is the mode's key (iv in unkeyed mode; the key words in
+// keyed / derive-key modes), and the mode's base flags are folded in alongside
+// flagParent.
+func parentOutput(left, right, key [8]uint32, flags uint32) output {
 	var block [16]uint32
 	copy(block[:8], left[:])
 	copy(block[8:], right[:])
-	return output{inputCV: iv, block: block, blockLen: blockLen, flags: flagParent}
+	return output{inputCV: key, block: block, blockLen: blockLen, flags: flags | flagParent}
 }
 
-// chunkState accumulates one chunk (up to 1024 bytes) of input.
+// keyWords decodes a 32-byte key into the 8 little-endian words BLAKE3 uses as
+// the initial chaining value in keyed and derive-key modes.
+func keyWords(key []byte) [8]uint32 {
+	var w [8]uint32
+	for i := range w {
+		w[i] = binary.LittleEndian.Uint32(key[i*4:])
+	}
+	return w
+}
+
+// chunkState accumulates one chunk (up to 1024 bytes) of input. flags carries
+// the mode's base flags (0 unkeyed, KEYED_HASH, or DERIVE_KEY_MATERIAL), folded
+// into every block compression.
 type chunkState struct {
 	cv               [8]uint32
 	chunkCounter     uint64
+	flags            uint32
 	block            [blockLen]byte
 	blockLen         int
 	blocksCompressed int
 }
 
-func newChunkState(counter uint64) chunkState {
-	return chunkState{cv: iv, chunkCounter: counter}
+// newChunkState starts a chunk whose initial chaining value is key (iv in
+// unkeyed mode, the key words otherwise) and whose compressions carry flags.
+func newChunkState(key [8]uint32, counter uint64, flags uint32) chunkState {
+	return chunkState{cv: key, chunkCounter: counter, flags: flags}
 }
 
 func (c *chunkState) len() int { return blockLen*c.blocksCompressed + c.blockLen }
@@ -174,7 +201,7 @@ func (c *chunkState) update(input []byte) {
 	for len(input) > 0 {
 		if c.blockLen == blockLen {
 			w := wordsFromLE(c.block[:])
-			c.cv = first8(compress(&c.cv, &w, c.chunkCounter, blockLen, c.startFlag()))
+			c.cv = first8(compress(&c.cv, &w, c.chunkCounter, blockLen, c.flags|c.startFlag()))
 			c.blocksCompressed++
 			c.block = [blockLen]byte{}
 			c.blockLen = 0
@@ -191,21 +218,53 @@ func (c *chunkState) output() output {
 		block:    wordsFromLE(c.block[:]),
 		counter:  c.chunkCounter,
 		blockLen: uint32(c.blockLen),
-		flags:    c.startFlag() | flagChunkEnd,
+		flags:    c.flags | c.startFlag() | flagChunkEnd,
 	}
 }
 
 // Hasher is an incremental BLAKE3 hasher. It is not safe for concurrent use.
-// The zero value is not usable; obtain one from New.
+// The zero value is not usable; obtain one from New, NewKeyed, or NewDeriveKey.
 type Hasher struct {
+	key        [8]uint32 // initial chaining value: iv (unkeyed) or the key words
+	flags      uint32    // base flags: 0, KEYED_HASH, or DERIVE_KEY_MATERIAL
 	chunk      chunkState
 	cvStack    [54][8]uint32 // one slot per tree level (covers any practical input)
 	cvStackLen int
 }
 
+// newHasher builds a Hasher for the given mode (key = initial chaining value,
+// flags = base domain-separation flags applied to every compression).
+func newHasher(key [8]uint32, flags uint32) *Hasher {
+	return &Hasher{key: key, flags: flags, chunk: newChunkState(key, 0, flags)}
+}
+
 // New returns a new streaming BLAKE3 hasher in the default (unkeyed) mode.
 func New() *Hasher {
-	return &Hasher{chunk: newChunkState(0)}
+	return newHasher(iv, 0)
+}
+
+// NewKeyed returns a streaming BLAKE3 hasher in keyed mode (BLAKE3's keyed
+// hashing / MAC construction). The 32-byte key replaces the IV as the initial
+// chaining value and every compression carries the KEYED_HASH flag.
+func NewKeyed(key [keyLen]byte) *Hasher {
+	return newHasher(keyWords(key[:]), flagKeyedHash)
+}
+
+// NewDeriveKey returns a streaming BLAKE3 hasher in key-derivation mode for the
+// given context string. Per the BLAKE3 spec this is a two-phase construction:
+// the context string is first hashed with the DERIVE_KEY_CONTEXT flag to obtain
+// a 32-byte context key, which then becomes the initial chaining value for the
+// key material, hashed with the DERIVE_KEY_MATERIAL flag. Write the key material
+// into the returned hasher; its (extendable) output is the derived key.
+//
+// The context string should be hardcoded, globally unique, and
+// application-specific, as recommended by the BLAKE3 spec.
+func NewDeriveKey(context string) *Hasher {
+	ctx := newHasher(iv, flagDeriveKeyContext)
+	ctx.Write([]byte(context))
+	var contextKey [keyLen]byte
+	ctx.finalize(contextKey[:])
+	return newHasher(keyWords(contextKey[:]), flagDeriveKeyMaterial)
 }
 
 // Size returns the default digest size in bytes (32).
@@ -214,9 +273,10 @@ func (h *Hasher) Size() int { return 32 }
 // BlockSize returns the hash block size in bytes (64).
 func (h *Hasher) BlockSize() int { return blockLen }
 
-// Reset restores the hasher to its initial state.
+// Reset restores the hasher to its initial state, preserving its mode (unkeyed,
+// keyed, or derive-key).
 func (h *Hasher) Reset() {
-	h.chunk = newChunkState(0)
+	h.chunk = newChunkState(h.key, 0, h.flags)
 	h.cvStackLen = 0
 }
 
@@ -234,7 +294,7 @@ func (h *Hasher) popCV() [8]uint32 {
 // completed subtrees (mirroring the reference add_chunk_chaining_value).
 func (h *Hasher) addChunkCV(cv [8]uint32, totalChunks uint64) {
 	for totalChunks&1 == 0 {
-		cv = parentOutput(h.popCV(), cv).chainingValue()
+		cv = parentOutput(h.popCV(), cv, h.key, h.flags).chainingValue()
 		totalChunks >>= 1
 	}
 	h.pushCV(cv)
@@ -248,7 +308,7 @@ func (h *Hasher) Write(p []byte) (int, error) {
 			cv := h.chunk.output().chainingValue()
 			total := h.chunk.chunkCounter + 1
 			h.addChunkCV(cv, total)
-			h.chunk = newChunkState(total)
+			h.chunk = newChunkState(h.key, total, h.flags)
 		}
 		want := chunkLen - h.chunk.len()
 		if want > len(p) {
@@ -264,7 +324,7 @@ func (h *Hasher) Write(p []byte) (int, error) {
 func (h *Hasher) finalize(out []byte) {
 	o := h.chunk.output()
 	for i := h.cvStackLen - 1; i >= 0; i-- {
-		o = parentOutput(h.cvStack[i], o.chainingValue())
+		o = parentOutput(h.cvStack[i], o.chainingValue(), h.key, h.flags)
 	}
 	o.rootOutput(out)
 }
@@ -318,7 +378,7 @@ func parallelChunks(n int, fn func(int)) {
 // index i (data[i*chunkLen:(i+1)*chunkLen]). It is the scalar per-chunk kernel
 // shared by the generic fillChunkCVs and the SIMD path's remainder/fallback.
 func chunkCV(data []byte, i int) [8]uint32 {
-	cs := newChunkState(uint64(i))
+	cs := newChunkState(iv, uint64(i), 0)
 	cs.update(data[i*chunkLen : (i+1)*chunkLen])
 	return cs.output().chainingValue()
 }
@@ -345,22 +405,22 @@ func fillChunkCVsScalar(data []byte, cvs [][8]uint32) {
 // to the incremental Hasher.
 func hashAll(data []byte) output {
 	if len(data) <= chunkLen {
-		cs := newChunkState(0)
+		cs := newChunkState(iv, 0, 0)
 		cs.update(data)
 		return cs.output()
 	}
 	nChunks := (len(data) + chunkLen - 1) / chunkLen
 	cvs := make([][8]uint32, nChunks-1)
 	fillChunkCVs(data, cvs)
-	var stack Hasher
+	stack := New()
 	for i, cv := range cvs {
 		stack.addChunkCV(cv, uint64(i)+1)
 	}
-	last := newChunkState(uint64(nChunks - 1))
+	last := newChunkState(iv, uint64(nChunks-1), 0)
 	last.update(data[(nChunks-1)*chunkLen:])
 	o := last.output()
 	for i := stack.cvStackLen - 1; i >= 0; i-- {
-		o = parentOutput(stack.cvStack[i], o.chainingValue())
+		o = parentOutput(stack.cvStack[i], o.chainingValue(), iv, 0)
 	}
 	return o
 }
