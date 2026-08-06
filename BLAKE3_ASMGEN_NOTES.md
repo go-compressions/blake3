@@ -96,7 +96,7 @@ parallelism. The take-away: go-asmgen brings SIMD BLAKE3 to **stable Go, every
 
 go-asmgen is a generate-time tool, not a module dependency (the `mix4_*_gen.go`
 are `//go:build ignore`; the `.s` files are committed, so consumers build with no
-extra deps and the module stays `go 1.21`). To regenerate after editing a
+extra deps and the module stays `go 1.26`). To regenerate after editing a
 generator:
 
 ```sh
