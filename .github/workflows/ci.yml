@@ -21,7 +21,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26.x'
+          go-version: '1.27.x'
           check-latest: true
           cache: true
 
@@ -52,12 +52,12 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26.x'
+          go-version: '1.27.x'
           check-latest: true
           cache: true
 
       # Builds the experimental amd64 SIMD chunk kernel (blake3_simd_amd64.go,
-      # Go 1.26's simd/archsimd intrinsics, no cgo/assembly) and runs the full
+      # Go 1.27's simd/archsimd intrinsics, no cgo/assembly) and runs the full
       # suite against the official BLAKE3 vectors on a real AVX2 CPU. This path
       # is not held to the 100% gate (the no-AVX2 fallback branch is unreachable
       # on an AVX2 runner); the pure-Go `ci` job above is the gated build.
