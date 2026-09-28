@@ -45,7 +45,7 @@ func fillChunkCVs(data []byte, cvs [][8]uint32) {
 // bcast returns a vector with x in every lane.
 func bcast(x uint32) archsimd.Uint32x8 {
 	a := [8]uint32{x, x, x, x, x, x, x, x}
-	return archsimd.LoadUint32x8Slice(a[:])
+	return archsimd.LoadUint32x8(a[:])
 }
 
 // rotr rotates every 32-bit lane right by k (0 < k < 32) using two shifts and
@@ -80,8 +80,8 @@ func compress8(data []byte, base int, cvs [][8]uint32) {
 		ctrLo[j] = uint32(c)
 		ctrHi[j] = uint32(c >> 32)
 	}
-	vCtrLo := archsimd.LoadUint32x8Slice(ctrLo[:])
-	vCtrHi := archsimd.LoadUint32x8Slice(ctrHi[:])
+	vCtrLo := archsimd.LoadUint32x8(ctrLo[:])
+	vCtrHi := archsimd.LoadUint32x8(ctrHi[:])
 	vBlockLen := bcast(blockLen)
 
 	// Chaining value, IV broadcast across lanes.
@@ -107,7 +107,7 @@ func compress8(data []byte, base int, cvs [][8]uint32) {
 		}
 		var m [16]archsimd.Uint32x8
 		for i := 0; i < 16; i++ {
-			m[i] = archsimd.LoadUint32x8Slice(scratch[i][:])
+			m[i] = archsimd.LoadUint32x8(scratch[i][:])
 		}
 
 		flags := uint32(0)
@@ -143,7 +143,7 @@ func compress8(data []byte, base int, cvs [][8]uint32) {
 	// Scatter lane j of each CV word back to chunk base+j.
 	var lane [8]uint32
 	for i := 0; i < 8; i++ {
-		cv[i].StoreSlice(lane[:])
+		cv[i].Store(lane[:])
 		for j := 0; j < 8; j++ {
 			cvs[base+j][i] = lane[j]
 		}
