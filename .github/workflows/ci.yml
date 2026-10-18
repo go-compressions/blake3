@@ -34,6 +34,26 @@ jobs:
       - name: Run Taskfile ci
         run: task ci
 
+      # ⛔ THE PURE-GO FALLBACK WAS COMPILED BY NOTHING. blake3_generic.go sits
+      # behind `!arm64 && !amd64 && !loong64 && !riscv64 && !ppc64le && !s390x`
+      # -- the six architectures every other lane covers -- so no job here
+      # built it, and buildscan named it for the same reason it named
+      # blake3_simd_arm64.go. `go vet` cross-compiles, so three configurations
+      # cost seconds and no runner.
+      #
+      # ⛔ IN THE WORKFLOW, NOT THE TASKFILE, and that is the whole decision.
+      # `task ci` is where lint, build and test live, and a configuration
+      # declared inside a Taskfile is invisible to every instrument that reads
+      # workflows -- the same blindness testscan reports for a `go test $PKGS`.
+      # A platform nobody can SEE being covered is one step from a platform
+      # nobody covers. One step per configuration, for the same reason.
+      - name: vet the generic fallback, 386
+        run: GOOS=linux GOARCH=386 go vet ./...
+      - name: vet the generic fallback, arm
+        run: GOOS=linux GOARCH=arm go vet ./...
+      - name: vet the generic fallback, js/wasm
+        run: GOOS=js GOARCH=wasm go vet ./...
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v7
