@@ -42,9 +42,27 @@ jobs:
           path: cover.out
           if-no-files-found: ignore
 
+  # ⛔ BOTH ARCHITECTURES, because the conjunction is what was missing.
+  #
+  # This job was amd64 only, and simd-6arch.yml says in its own header "no
+  # GOEXPERIMENT". So `//go:build goexperiment.simd && arm64` was satisfied by
+  # NO job: each half covered, their conjunction never. blake3_simd_arm64.go
+  # stopped compiling when the experimental API renamed TransposeEven/Odd and
+  # AsUint64x2, and nothing said so for eleven days -- the CI stayed green
+  # because no configuration that could fail existed. Found by hand on an arm64
+  # laptop, then named by go-fleettools/buildscan, which exists to answer
+  # exactly this question.
+  #
+  # A matrix rather than a second job, so the two legs cannot drift apart.
   simd:
-    name: experimental SIMD (amd64, GOEXPERIMENT=simd)
-    runs-on: ubuntu-latest
+    name: experimental SIMD (${{ matrix.arch }}, GOEXPERIMENT=simd)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, arch: amd64 }
+          - { os: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -56,14 +74,17 @@ jobs:
           check-latest: true
           cache: true
 
-      # Builds the experimental amd64 SIMD chunk kernel (blake3_simd_amd64.go,
-      # Go 1.27's simd/archsimd intrinsics, no cgo/assembly) and runs the full
-      # suite against the official BLAKE3 vectors on a real AVX2 CPU. This path
-      # is not held to the 100% gate (the no-AVX2 fallback branch is unreachable
-      # on an AVX2 runner); the pure-Go `ci` job above is the gated build.
+      # Builds the experimental SIMD chunk kernel for this architecture --
+      # blake3_simd_amd64.go on AVX2, blake3_simd_arm64.go on NEON, both Go
+      # 1.27's simd/archsimd intrinsics with no cgo and no assembly -- and runs
+      # the full suite against the official BLAKE3 vectors on a real CPU. These
+      # paths are not held to the 100% gate (the no-AVX2 fallback branch is
+      # unreachable on an AVX2 runner); the pure-Go `ci` job above is the gated
+      # build.
       - name: Vet + test under GOEXPERIMENT=simd
         env:
           GOEXPERIMENT: simd
         run: |
+          go env GOARCH
           go vet ./...
           go test -race -v ./...
