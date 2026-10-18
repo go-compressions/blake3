@@ -52,19 +52,35 @@ func rotr(x archsimd.Uint32x4, k uint64) archsimd.Uint32x4 {
 // result k = {r0[k], r1[k], r2[k], r3[k]}. Two 32-bit transposes (TRN1/TRN2)
 // then two 64-bit interleaves (ZIP1/ZIP2) — the standard NEON 4×4 transpose,
 // expressed with archsimd intrinsics (no scalar gather).
+//
+// ⛔ The first two were written as TransposeEven/TransposeOdd, which the
+// experimental API dropped: this file stopped compiling under go1.27.2 and
+// nothing said so for eleven days, because `goexperiment.simd && arm64` is a
+// conjunction no lane satisfied — the experiment is set on an amd64 job and
+// the arm64 workflow says "no GOEXPERIMENT". See the issue this closes.
+//
+// The replacements are not a guess. `go doc` gives the instruction for each:
+// InterleaveEven is VTRN1 and InterleaveOdd is VTRN2, which is exactly what
+// the comment above asked for. ConcatEven/ConcatOdd are VUZP1/VUZP2 and would
+// have been the wrong pair — same shape of name, different instruction, and
+// the test vectors are what would have caught it.
 func transpose4(r0, r1, r2, r3 archsimd.Uint32x4) (archsimd.Uint32x4, archsimd.Uint32x4, archsimd.Uint32x4, archsimd.Uint32x4) {
-	t0 := r0.TransposeEven(r1)
-	t1 := r0.TransposeOdd(r1)
-	t2 := r2.TransposeEven(r3)
-	t3 := r2.TransposeOdd(r3)
-	a0 := t0.AsUint64x2()
-	a1 := t1.AsUint64x2()
-	a2 := t2.AsUint64x2()
-	a3 := t3.AsUint64x2()
-	return a0.InterleaveLo(a2).AsUint32x4(), // col 0
-		a1.InterleaveLo(a3).AsUint32x4(), // col 1
-		a0.InterleaveHi(a2).AsUint32x4(), // col 2
-		a1.InterleaveHi(a3).AsUint32x4() // col 3
+	t0 := r0.InterleaveEven(r1) // VTRN1
+	t1 := r0.InterleaveOdd(r1)  // VTRN2
+	t2 := r2.InterleaveEven(r3)
+	t3 := r2.InterleaveOdd(r3)
+	// AsUint64x2/AsUint32x4 were renamed too: ReshapeTo… is documented as
+	// "reinterprets the bits", which is what these are for -- the lanes are
+	// not converted, only read at another width so that ZIP1/ZIP2 move
+	// 64-bit pairs.
+	a0 := t0.ReshapeToUint64s()
+	a1 := t1.ReshapeToUint64s()
+	a2 := t2.ReshapeToUint64s()
+	a3 := t3.ReshapeToUint64s()
+	return a0.InterleaveLo(a2).ReshapeToUint32s(), // col 0, VZIP1
+		a1.InterleaveLo(a3).ReshapeToUint32s(), // col 1
+		a0.InterleaveHi(a2).ReshapeToUint32s(), // col 2, VZIP2
+		a1.InterleaveHi(a3).ReshapeToUint32s() // col 3
 }
 
 func gVec(va, vb, vc, vd, mx, my archsimd.Uint32x4) (archsimd.Uint32x4, archsimd.Uint32x4, archsimd.Uint32x4, archsimd.Uint32x4) {
