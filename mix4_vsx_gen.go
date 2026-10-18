@@ -80,22 +80,22 @@ func gVec(b *ppc64.Builder, a, bb, c, d, scx, scy int) {
 	loadWord(b, "R3", bb*16, 1)
 	loadWord(b, "R3", c*16, 2)
 	loadWord(b, "R3", d*16, 3)
-	b.Raw("VADDUWM V0, V1, V0")            // a += b
-	loadWord(b, "R4", scx*16, 4)           // mx
-	b.Raw("VADDUWM V0, V4, V0")            // a += mx
-	b.Raw("VXOR V3, V0, V3")               // d ^= a
-	b.Raw("VRLW V3, %s, V3", rotR16)       // d = rotr(d,16)
-	b.Raw("VADDUWM V2, V3, V2")            // c += d
-	b.Raw("VXOR V1, V2, V1")               // b ^= c
-	b.Raw("VRLW V1, %s, V1", rotR12)       // b = rotr(b,12)
-	b.Raw("VADDUWM V0, V1, V0")            // a += b
-	loadWord(b, "R4", scy*16, 4)           // my
-	b.Raw("VADDUWM V0, V4, V0")            // a += my
-	b.Raw("VXOR V3, V0, V3")               // d ^= a
-	b.Raw("VRLW V3, %s, V3", rotR8)        // d = rotr(d,8)
-	b.Raw("VADDUWM V2, V3, V2")            // c += d
-	b.Raw("VXOR V1, V2, V1")               // b ^= c
-	b.Raw("VRLW V1, %s, V1", rotR7)        // b = rotr(b,7)
+	b.Raw("VADDUWM V0, V1, V0")      // a += b
+	loadWord(b, "R4", scx*16, 4)     // mx
+	b.Raw("VADDUWM V0, V4, V0")      // a += mx
+	b.Raw("VXOR V3, V0, V3")         // d ^= a
+	b.Raw("VRLW V3, %s, V3", rotR16) // d = rotr(d,16)
+	b.Raw("VADDUWM V2, V3, V2")      // c += d
+	b.Raw("VXOR V1, V2, V1")         // b ^= c
+	b.Raw("VRLW V1, %s, V1", rotR12) // b = rotr(b,12)
+	b.Raw("VADDUWM V0, V1, V0")      // a += b
+	loadWord(b, "R4", scy*16, 4)     // my
+	b.Raw("VADDUWM V0, V4, V0")      // a += my
+	b.Raw("VXOR V3, V0, V3")         // d ^= a
+	b.Raw("VRLW V3, %s, V3", rotR8)  // d = rotr(d,8)
+	b.Raw("VADDUWM V2, V3, V2")      // c += d
+	b.Raw("VXOR V1, V2, V1")         // b ^= c
+	b.Raw("VRLW V1, %s, V1", rotR7)  // b = rotr(b,7)
 	storeWord(b, "R3", a*16, 0)
 	storeWord(b, "R3", bb*16, 1)
 	storeWord(b, "R3", c*16, 2)
