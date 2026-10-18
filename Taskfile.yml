@@ -22,9 +22,19 @@ tasks:
         awk "BEGIN{ exit !(${pct} >= 100.0) }" || { echo "coverage ${pct}% < 100.0%"; exit 1; }
 
   lint:
-    desc: "Vet the module"
+    desc: "Vet the module and check it is gofmt-clean"
     cmds:
       - go vet ./...
+      # ⛔ NOTHING CHECKED THE FORMATTING, here or in the workflow, and
+      # mix4_vsx_gen.go had drifted on main with nobody told. Put in `lint`
+      # rather than in the workflow so that `task lint` catches it before a
+      # push, which is where a formatting miss belongs.
+      #
+      # The drift is NAMED, not just counted: a gate that says "not clean"
+      # without saying which file sends its reader to run gofmt themselves.
+      - |
+        drift=$(gofmt -l .)
+        if [ -n "$drift" ]; then echo "::error::not gofmt-clean:"; echo "$drift"; exit 1; fi
 
   ci:
     desc: "Run lint + build + test (used by the GitHub Actions workflow)"
